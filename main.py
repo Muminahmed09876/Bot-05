@@ -73,6 +73,8 @@ STATE_EDIT_MENU = "EDIT_MENU"
 STATE_EDIT_NEW_MEDIA = "EDIT_NEW_MEDIA"
 STATE_EDIT_NEW_CAPTION = "EDIT_NEW_CAPTION"
 STATE_EDIT_NEW_BUTTONS = "EDIT_NEW_BUTTONS"
+# New state for /id command
+STATE_AWAIT_ID_FORWARD = "AWAIT_ID_FORWARD"
 
 DEFAULT_POST_DATA = {
     'image_name': "Image Name",
@@ -460,6 +462,7 @@ async def set_bot_commands():
         BotCommand("mkv_video_audio_change", "MKV ভিডিওর অডিও ট্র্যাক পরিবর্তন (admin only)"),
         BotCommand("create_post", "নতুন পোস্ট তৈরি করুন (admin only)"), 
         BotCommand("post", "Manage Channels & Posts (admin only)"),
+        BotCommand("id", "Get Channel/File ID (admin only)"),
         BotCommand("mode_check", "বর্তমান মোড স্ট্যাটাস চেক করুন (admin only)"), 
         BotCommand("broadcast", "ব্রডকাস্ট (কেবল অ্যাডমিন)"),
         BotCommand("help", "সহায়িকা")
@@ -560,6 +563,7 @@ async def start_handler(c, m: Message):
         "/mkv_video_audio_change - MKV ভিডিওর অডিও ট্র্যাক পরিবর্তন মোড টগল করুন (admin only)\n"
         "/create_post - নতুন পোস্ট তৈরি করুন (admin only)\n" 
         "/post - Manage Channels and Create Button Posts (admin only)\n"
+        "/id - Get Channel/File ID (admin only)\n"
         "/mode_check - বর্তমান মোড স্ট্যাটাস চেক করুন এবং পরিবর্তন করুন (admin only)\n" 
         "/broadcast <text> - ব্রডকাস্ট (শুধুমাত্র অ্যাডমিন)\n"
         "/help - সাহায্য"
@@ -580,6 +584,12 @@ async def post_command(client, message):
         [InlineKeyboardButton("Create New Post", callback_data="mode_create_post")]
     ])
     await message.reply("Select an option:", reply_markup=markup)
+
+# --- NEW: /id Command Handler ---
+@app.on_message(filters.command("id") & admin_filter)
+async def id_command_handler(client, message):
+    user_data[message.from_user.id] = {"state": STATE_AWAIT_ID_FORWARD}
+    await message.reply("Please forward a message from a Channel or Group to get IDs.")
 
 # --- NEW: Callbacks for Post Bot ---
 @app.on_callback_query(filters.regex(r"^(mode_|edit_|cancel$|cancel_to_|skip_|send_to_)"))
@@ -663,6 +673,12 @@ async def post_callback_handler(client, callback: CallbackQuery):
             user_data[uid]["state"] = STATE_IDLE
         except Exception as e: await callback.message.edit_text(f"Error: {e}")
 
+# --- Callback for Admin ID Button ---
+@app.on_callback_query(filters.regex("^show_admin_id"))
+async def show_admin_id_callback(client, callback: CallbackQuery):
+    if not is_admin(callback.from_user.id): return
+    await callback.answer(f"Your Admin ID: {callback.from_user.id}", show_alert=True)
+
 # --- NEW: State Machine Handler for Post Bot ---
 # This handler runs before the general text_handler to capture input when in a specific state
 @app.on_message(admin_filter, group=-1)
@@ -741,6 +757,32 @@ async def post_state_handler(client, message: Message):
         user_data[uid]["new_buttons_text"] = message.text
         await message.reply("Buttons Updated. What next?", reply_markup=get_edit_menu_markup())
         user_data[uid]["state"] = STATE_EDIT_MENU
+        message.stop_propagation()
+
+    elif state == STATE_AWAIT_ID_FORWARD:
+        chat_id = "N/A"
+        chat_title = "N/A"
+        if message.forward_from_chat:
+            chat_id = message.forward_from_chat.id
+            chat_title = message.forward_from_chat.title
+        elif message.forward_from:
+            chat_id = message.forward_from.id
+            chat_title = message.forward_from.first_name
+        
+        file_id = "No Media"
+        if message.video: file_id = message.video.file_id
+        elif message.document: file_id = message.document.file_id
+        elif message.photo: file_id = message.photo.file_id
+        elif message.audio: file_id = message.audio.file_id
+        elif message.voice: file_id = message.voice.file_id
+        elif message.animation: file_id = message.animation.file_id
+        elif message.sticker: file_id = message.sticker.file_id
+
+        text = f"**Source ID:** `{chat_id}`\n**Source Title:** {chat_title}\n**File ID:** `{file_id}`"
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("Admin Id", callback_data="show_admin_id")]])
+        
+        await message.reply(text, reply_markup=markup, parse_mode=ParseMode.MARKDOWN)
+        user_data[uid]["state"] = STATE_IDLE
         message.stop_propagation()
 
 # -----------------------------------------------
